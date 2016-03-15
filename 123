@@ -1,0 +1,166 @@
+
+/*
+ *    脚本编写信息描述：ATM_120_2407_存款
+ *
+ *    项目名称：PB优化性能测试
+ *
+ *    脚本功能：模拟IC卡余额查询
+ *
+ *    版 本 号：V1.00
+ *
+ *    交易路径：
+ *
+ *    编码语言：C
+ *
+ *    开发协议：Windows Sockets
+ *
+ *    作    者：张  华
+ *
+ *    时    间：2013-04-07
+*/
+
+Action()
+{
+	unsigned char BitMap[17];           // 声明存放bitmap字符数组
+    unsigned char DESTemp[512];         // 声明存放2~49号域报文体的字符数组
+    unsigned char PassWord[9];          // 声明存放52号域（PIN码）的字符数组
+    unsigned char DES128[26];           // 声明存放128号域的字符数组
+    unsigned char DES55[147];           // 声明存放55号域的字符数组
+    unsigned char sendbuf[512];         // 声明存放整个发送报文的字符数组
+	unsigned char respcode[9];			// 声明存放返回报文39、41域的字符数组，用于判断交易处理成功与否
+    char * ReturnData = NULL;           // 存放返回结果的字符指针
+	char mystr[8];                      // 声明存放socket连接名称的字符数组
+
+	int intConn = -1;                   // 存放建立socket连接返回结果
+
+	// 字符数组初始化
+    memset(BitMap, 0, 17);
+    memset(DESTemp, 0, 512);
+    memset(PassWord, 0, 9);
+    memset(DES128, 0, 26);
+    memset(DES55, 0, 147);
+    memset(sendbuf, 0, 512);
+	memset(respcode, 0, 9);
+	memset(mystr, 0, 8);
+
+	// 组报文体
+	sprintf(DESTemp, "%s", lr_eval_string(
+                                          "19<P_CardNo>"                                         // P-2     账号 N..19(LLVAR)
+                                          "210000"                                               // P-3	    交易码	N6
+                                          "000000030000"                                         // P-4     交易金额 N12
+                                          "<P_DE15_Date><P_DE12_DateTime>"                       // P-7	    交易日期时间	N10
+                                          "<P_DE11_Rand6>"                                       // P-11	系统跟踪号	N6
+                                          "<P_DE12_DateTime>"                                    // P-12	本地交易时间	N6
+                                          "<P_DE15_Date>"                                        // P-13	本地交易日期	N4
+                                          "011"                                                  // P-24    卡种类      N3
+                                          "0816210300"                                           // P-33	授权机构标识码	N..11(LLVAR)
+                                          "316210331410017497280=49121205950"             		 // P-35	二磁道数据	Z…37(LLVAR)
+                                          "000"                                                  // P-36	三磁道数据	Z...104(LLVAR)
+                                          "971402"                                               // P-41	收单单位终端标识码	ANS6
+                                          "1182           "                                      // P-42	收单商户定义码	ANS15
+                                          "001"                                                  // P-49	交易货币代码	AN3
+                                          "01400000500010000"                                    // P-61
+                                          ));
+	sprintf(DES128, "%s", lr_eval_string("00000000"));                                           //P-128	信息确认码（MAC）	B8
+
+	// P-52 用户密码(8) c7d9fd703afb5578
+    PassWord[0] = '\xC7';
+	PassWord[1] = '\xD9';
+	PassWord[2] = '\xFD';
+	PassWord[3] = '\x70';
+	PassWord[4] = '\x3A';
+	PassWord[5] = '\xFB';
+	PassWord[6] = '\x55';
+	PassWord[7] = '\x78';
+
+    // 组bitmap 18位 f2380100b0c090000000000000000001
+    BitMap[0] = '\xF2';
+    BitMap[1] = '\x38';
+    BitMap[2] = '\x01';
+    BitMap[3] = '\x00';
+    BitMap[4] = '\xB0';
+    BitMap[5] = '\xC0';
+    BitMap[6] = '\x90';
+    BitMap[7] = '\x00';
+    BitMap[8] = '\x00';
+    BitMap[9] = '\x00';
+    BitMap[10] = '\x00';
+    BitMap[11] = '\x00';
+    BitMap[12] = '\x00';
+    BitMap[13] = '\x00';
+    BitMap[14] = '\x00';
+    BitMap[15] = '\x01';
+
+    memcpy( sendbuf, "01800000000200", 14 );    // 将报文长度（4位）+000000（6位）+MTI（4位）COPY进总的发送报文sendbuf
+
+    memcpy( sendbuf+14, BitMap, 16 );    // 将BitMap（8位）COPY进总的发送报文sendbuf
+
+	memcpy( sendbuf+30, DESTemp, 138 );    // 将报文体中2~49域COPY进总的发送报文sendbuf
+
+	memcpy( sendbuf+168, PassWord, 8 );    // 将报文体中52域（8位）COPY进总的发送报文sendbuf
+
+	memcpy( sendbuf+176, DES128, 8 );    // 将报文体中128域（8位）COPY进总的发送报文sendbuf
+
+    sprintf( mystr, "%s", lr_eval_string("ATM<P_SockId>") );    // socket连接名称
+
+	intConn = lrs_create_socket( mystr, "TCP", "RemoteHost=<P_PBHostIp>", LrsLastArg );    // 建立socket连接
+
+	lr_start_transaction( "ATM_120_2407_存款" );    // 事务开始
+
+	if( 0 == intConn )    // 如果socket连接创建成功
+	{
+		lrs_set_send_buffer( mystr, (char*)sendbuf, 184 );    // 缓冲区数据重定义
+
+		lrs_set_send_timeout( 30, 0 );    // 设置发送报文的超时时间
+
+		lrs_length_send( mystr, "buf0", 0, LrsLastArg );    // 发送报文
+
+		lrs_set_recv_timeout( 30, 0 );    // 设置接收返回报文的超时时间
+
+		lrs_receive( mystr, "buf1", LrsLastArg );    // 接收返回报文
+
+		ReturnData = lrs_get_received_buffer( mystr, 0,  - 1, NULL );    // 抓取返回数据
+
+		if( ReturnData == NULL ){
+
+			lr_end_transaction( "ATM_120_2407_存款", LR_STOP );
+
+			lr_error_message( "TimeOut:  No Answer==[CardNo=%s][Traceid=%s]", lr_eval_string( "<P_CardNo>" ), lr_eval_string( "<P_DE11_Rand6>" ) );
+
+		}    // 如果没有接收到返回结果报文事务标识未STOP
+		else{
+
+			memcpy( respcode, ReturnData+111, 8 );    // 将系统处理返回状态码赋值给respcode变量
+			lr_log_message("-------%s--------",respcode);
+
+			if( 0 == memcmp( respcode, "00971402", 8 ) )    // 如果系统处理返回码表示交易处理成功
+
+				lr_end_transaction( "ATM_120_2407_存款", LR_PASS );    // 事务结束，返回状态为PASS
+
+			else    // 系统处理返回码表示交易处理不成功
+			{
+					lr_error_message ( "TRANSACTION FAIL![CardNo=%s][Traceid=%s]", lr_eval_string( "<P_CardNo>" ), lr_eval_string( "<P_DE11_Rand6>" ));    // 将系统返回报文中的错误代状态码输出到LR执行的log文件和OutPut窗口
+
+					lr_end_transaction( "ATM_120_2407_存款", LR_FAIL );    // 事务结束，返回状态为FAIL
+			}
+
+		}    // 如果接收到返回报文
+
+		lrs_close_socket( mystr );   // 关闭socket连接
+
+		ReturnData = NULL;    // 释放ReturnData变量空间
+
+	}    // 如果socket连接创建成功
+	else
+	{
+
+		lr_error_message( "SOCKET CREATE FAIL! ERROR CODE=[%d]", intConn );    // 将创建socket连接不成功的返回码输出到LR执行的log文件和OutPut窗口
+
+		lr_end_transaction( "ATM_120_2407_存款", LR_STOP );    // 事务结束，返回状态为STOP
+
+	}
+
+	return 0;
+}
+
+
